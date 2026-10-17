@@ -16,10 +16,12 @@ def RCGMP_FromIntOp : RCGMPOp<"from_int"> {
   }];
 }
 
-def RCGMP_RetainOp : RCGMPOp<"retain", [SameOperandsAndResultType]> {
-  let summary = "Borrow an integer and produce an additional owned reference";
+def RCGMP_RetainOp : RCGMPOp<"retain"> {
+  let summary = "Add one owned reference to an integer";
+  let description = [{
+    The operand must own at least one reference and owns one more afterwards.
+  }];
   let arguments = (ins RCGMP_MpzType:$value);
-  let results = (outs RCGMP_MpzType:$result);
   let assemblyFormat = "$value attr-dict `:` type($value)";
 }
 
