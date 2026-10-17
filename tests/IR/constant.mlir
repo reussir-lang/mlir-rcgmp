@@ -24,6 +24,29 @@ func.func @values() -> (!rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.m
   return %zero, %minus, %one, %hex, %min : !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz<atomic>
 }
 
+// Values on either side of a 64-bit width step. A hexadecimal literal is
+// unsigned, and negative zero is zero.
+// CHECK-LABEL: func.func @boundaries
+// CHECK: rcgmp.constant 9223372036854775807 : !rcgmp.mpz
+// CHECK: rcgmp.constant -9223372036854775808 : !rcgmp.mpz
+// CHECK: rcgmp.constant 9223372036854775808 : !rcgmp.mpz
+// CHECK: rcgmp.constant -9223372036854775809 : !rcgmp.mpz
+// CHECK: rcgmp.constant 0 : !rcgmp.mpz
+// GENERIC-LABEL: sym_name = "boundaries"
+// GENERIC: <{value = 9223372036854775807 : i64}>
+// GENERIC: <{value = -9223372036854775808 : i64}>
+// GENERIC: <{value = 9223372036854775808 : i65}>
+// GENERIC: <{value = -9223372036854775809 : i65}>
+// GENERIC: <{value = false}>
+func.func @boundaries() -> (!rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz) {
+  %max = rcgmp.constant 9223372036854775807 : !rcgmp.mpz
+  %min = rcgmp.constant -9223372036854775808 : !rcgmp.mpz
+  %above = rcgmp.constant 0x8000000000000000 : !rcgmp.mpz
+  %below = rcgmp.constant -9223372036854775809 : !rcgmp.mpz
+  %zero = rcgmp.constant -0 : !rcgmp.mpz
+  return %max, %min, %above, %below, %zero : !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz
+}
+
 // Constants need no reference counting, so equal constants may merge
 // into one value consumed twice, and unused constants may be erased.
 // CSE-LABEL: func.func @merge
@@ -36,6 +59,20 @@ func.func @merge() -> !rcgmp.mpz {
   %b = rcgmp.constant 36893488147419103232 : !rcgmp.mpz
   %r = rcgmp.addi %a, %b : !rcgmp.mpz
   return %r : !rcgmp.mpz
+}
+
+// Spellings of one value merge, but constants of different types do not.
+// CSE-LABEL: func.func @modes
+// CSE-NEXT: %[[C:.*]] = rcgmp.constant 18446744073709551616 : !rcgmp.mpz
+// CSE-NEXT: %[[A:.*]] = rcgmp.constant 18446744073709551616 : <atomic>
+// CSE-NEXT: %[[R:.*]] = rcgmp.subi %[[C]], %[[C]] : !rcgmp.mpz
+// CSE-NEXT: return %[[R]], %[[A]]
+func.func @modes() -> (!rcgmp.mpz, !rcgmp.mpz<atomic>) {
+  %a = rcgmp.constant 0x10000000000000000 : !rcgmp.mpz
+  %b = rcgmp.constant 18446744073709551616 : !rcgmp.mpz
+  %c = rcgmp.constant 18446744073709551616 : !rcgmp.mpz<atomic>
+  %r = rcgmp.subi %a, %b : !rcgmp.mpz
+  return %r, %c : !rcgmp.mpz, !rcgmp.mpz<atomic>
 }
 
 // Upstream folds for i1 constants do not apply to integer constants.
