@@ -36,15 +36,23 @@ struct FromIntLowering : OpRewritePattern<FromIntOp> {
   }
 };
 
+// Move the insertion point into a branch taken only for counted heap values.
+// Immediate and immortal values have no reference count to update.
+void enterCountedBranch(PatternRewriter &rewriter, Location loc, Value value) {
+  auto immediate = bridge::MpzIsImmediateOp::create(rewriter, loc, value);
+  auto heap = scf::IfOp::create(rewriter, loc, immediate, true);
+  rewriter.setInsertionPointToStart(&heap.getElseRegion().front());
+  auto immortal = bridge::MpzIsImmortalOp::create(rewriter, loc, value);
+  auto counted = scf::IfOp::create(rewriter, loc, immortal, true);
+  rewriter.setInsertionPointToStart(&counted.getElseRegion().front());
+}
+
 struct RetainLowering : OpRewritePattern<RetainOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(RetainOp op,
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    auto immediate =
-        bridge::MpzIsImmediateOp::create(rewriter, loc, op.getValue());
-    auto branch = scf::IfOp::create(rewriter, loc, immediate, true);
-    rewriter.setInsertionPointToStart(&branch.getElseRegion().front());
+    enterCountedBranch(rewriter, loc, op.getValue());
     auto overflow = bridge::MpzIncRefOp::create(rewriter, loc, op.getValue());
     auto one = arith::ConstantIntOp::create(rewriter, loc, 1, 1);
     auto valid = arith::XOrIOp::create(rewriter, loc, overflow, one);
@@ -60,10 +68,7 @@ struct ReleaseLowering : OpRewritePattern<ReleaseOp> {
   LogicalResult matchAndRewrite(ReleaseOp op,
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
-    auto immediate =
-        bridge::MpzIsImmediateOp::create(rewriter, loc, op.getValue());
-    auto branch = scf::IfOp::create(rewriter, loc, immediate, true);
-    rewriter.setInsertionPointToStart(&branch.getElseRegion().front());
+    enterCountedBranch(rewriter, loc, op.getValue());
     auto last = bridge::MpzDecRefOp::create(rewriter, loc, op.getValue());
     auto destroy = scf::IfOp::create(rewriter, loc, last, false);
     rewriter.setInsertionPointToStart(&destroy.getThenRegion().front());

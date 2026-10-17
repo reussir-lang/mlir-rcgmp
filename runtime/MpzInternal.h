@@ -38,6 +38,15 @@ static inline int rcgmp_is_immediate(void *value) {
   return ((uintptr_t)value & 1) != 0;
 }
 
+// A counted object holds at least one reference while it is live, so a zero
+// count identifies a static immortal object for its whole lifetime.
+static inline int rcgmp_is_immortal(RCGMPMpz *value, uint32_t atomic) {
+  uintptr_t refs =
+      atomic ? atomic_load_explicit(&value->refs.atomic, memory_order_relaxed)
+             : value->refs.local;
+  return refs == 0;
+}
+
 static inline void *rcgmp_encode(intptr_t value) {
   return (void *)(((uintptr_t)value << 2) | 1);
 }

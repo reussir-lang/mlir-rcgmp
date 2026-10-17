@@ -12,6 +12,7 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<!llvm.ptr, dense<
   }
   // CHECK-LABEL: llvm.func @retain
   // CHECK: llvm.ptrtoint {{.*}} : !llvm.ptr to i32
+  // CHECK: llvm.load {{.*}} atomic monotonic {{.*}} : !llvm.ptr -> i32
   // CHECK: llvm.atomicrmw add {{.*}} monotonic : !llvm.ptr, i32
   func.func @retain(%x: !rcgmp.mpz<atomic>) -> !rcgmp.mpz<atomic> {
     rcgmp.retain %x : !rcgmp.mpz<atomic>

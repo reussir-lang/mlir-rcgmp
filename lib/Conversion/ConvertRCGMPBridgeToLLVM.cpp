@@ -286,25 +286,33 @@ struct FromBitsLowering : OpConversionPattern<MpzFromBitsOp> {
   }
 };
 
-struct IsUniqueLowering : OpConversionPattern<MpzIsUniqueOp> {
-  using OpConversionPattern::OpConversionPattern;
+// Compare a heap reference count with Count, loading atomic counts with
+// Ordering.
+template <typename Op, uint64_t Count, LLVM::AtomicOrdering Ordering>
+struct RefCountTestLowering : OpConversionPattern<Op> {
+  using OpConversionPattern<Op>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(MpzIsUniqueOp op, OpAdaptor adaptor,
+  matchAndRewrite(Op op, typename Op::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto word = wordType(op);
     auto count =
         LLVM::LoadOp::create(rewriter, op.getLoc(), word, adaptor.getValue());
     if (cast<MpzType>(op.getValue().getType()).getAtomic()) {
-      count.setOrdering(LLVM::AtomicOrdering::acquire);
+      count.setOrdering(Ordering);
       // The heap header has native-word alignment (enforced by the runtime).
       count.setAlignment(word.getWidth() / 8);
     }
-    auto one = integerConstant(rewriter, op.getLoc(), word, 1);
-    rewriter.replaceOpWithNewOp<LLVM::ICmpOp>(op, LLVM::ICmpPredicate::eq,
-                                              count, one);
+    auto expected = integerConstant(rewriter, op.getLoc(), word, Count);
+    rewriter.template replaceOpWithNewOp<LLVM::ICmpOp>(
+        op, LLVM::ICmpPredicate::eq, count, expected);
     return success();
   }
 };
+
+using IsUniqueLowering =
+    RefCountTestLowering<MpzIsUniqueOp, 1, LLVM::AtomicOrdering::acquire>;
+using IsImmortalLowering =
+    RefCountTestLowering<MpzIsImmortalOp, 0, LLVM::AtomicOrdering::monotonic>;
 
 } // namespace
 
@@ -317,8 +325,8 @@ void populateRCGMPBridgeToLLVMConversionPatterns(LLVMTypeConverter &converter,
            IsImmediateLowering, FitsImmediateLowering, FromImmediateLowering,
            PromoteLowering, RefCountLowering<MpzIncRefOp, true>,
            RefCountLowering<MpzDecRefOp, false>, FreeLowering, ToBitsLowering,
-           FromBitsLowering, IsUniqueLowering>(converter,
-                                               patterns.getContext());
+           FromBitsLowering, IsUniqueLowering, IsImmortalLowering>(
+          converter, patterns.getContext());
 }
 
 } // namespace mlir::rcgmp

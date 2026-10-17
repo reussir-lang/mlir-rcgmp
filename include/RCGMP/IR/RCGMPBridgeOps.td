@@ -89,11 +89,26 @@ def RCGMP_MpzPromoteOp : RCGMPBridgeOp<"mpz.promote", [RCGMP_NotSpeculatable]> {
   let summary = "Allocate an integer that does not fit the immediate range";
 }
 
+def RCGMP_MpzIsImmortalOp : RCGMPBridgeOp<"mpz.is_immortal",
+    [RCGMP_NotSpeculatable]> {
+  let summary = "Test whether a live heap value is immortal";
+  let description = [{
+    The operand must be a live heap handle. Immortal values are static objects
+    with a zero reference count, which a counted value never reaches while a
+    reference to it remains. Reference counting must skip them. Atomic counts
+    use a relaxed load.
+  }];
+  let arguments = (ins Arg<RCGMP_MpzType, "heap integer", [MemRead]>:$value);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$value attr-dict `:` type($value)";
+}
+
 def RCGMP_MpzIncRefOp : RCGMPBridgeOp<"mpz.inc_ref", [RCGMP_NotSpeculatable]> {
   let summary = "Increment a heap reference count and report overflow";
   let description = [{
-    The operand must be a live heap value. The result is true if the reference
-    count overflowed; the caller must terminate execution in that case.
+    The operand must be a live heap value that is not immortal. The result is
+    true if the reference count overflowed; the caller must terminate execution
+    in that case.
   }];
   let arguments = (ins Arg<RCGMP_MpzType, "heap integer",
                            [MemRead, MemWrite]>:$value);
@@ -104,7 +119,8 @@ def RCGMP_MpzIncRefOp : RCGMPBridgeOp<"mpz.inc_ref", [RCGMP_NotSpeculatable]> {
 def RCGMP_MpzDecRefOp : RCGMPBridgeOp<"mpz.dec_ref", [RCGMP_NotSpeculatable]> {
   let summary = "Consume a heap reference and report whether it was the last";
   let description = [{
-    The operand must be a live heap value with one owned reference available.
+    The operand must be a live heap value that is not immortal, with one owned
+    reference available.
     A true result must be followed by `bridge.mpz.free`. Atomic decrements use
     release ordering; the matching acquire fence is performed by free.
   }];
@@ -152,9 +168,10 @@ def RCGMP_MpzIsUniqueOp : RCGMPBridgeOp<"mpz.is_unique", [RCGMP_NotSpeculatable]
   let summary = "Test whether a live heap value has exactly one reference";
   let description = [{
     The operand must be a heap handle with an owned reference held by the caller.
-    Atomic counts use an acquire load. A true result licenses mutation only
-    while the reference remains exclusive; retaining or publishing an alias
-    invalidates that permission. This operation is not speculatable or pure.
+    The result is false for immortal values. Atomic counts use an acquire load. A
+    true result licenses mutation only while the reference remains exclusive;
+    retaining or publishing an alias invalidates that permission. This operation
+    is not speculatable or pure.
   }];
   let arguments = (ins Arg<RCGMP_MpzType, "heap integer", [MemRead]>:$value);
   let results = (outs I1:$result);

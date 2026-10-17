@@ -114,6 +114,15 @@ ordering, releases use release ordering, and final destruction performs an
 acquire fence. Reference-count overflow aborts. Atomic counting does not permit
 retaining a borrowed value after its last owning reference has been released.
 
+A heap object with a zero reference count is immortal, similar to persistent
+objects in [Lean](https://github.com/leanprover/lean4/blob/master/src/include/lean/lean.h).
+A counted object never has a zero count while it is referenced. Retain and
+release, in generated code and in the runtime, test the count before updating
+it and leave immortal objects unchanged; atomic counts are tested with a relaxed
+load. This costs one compare on the heap path. Uniqueness tests are false for
+immortal objects, so they are never reused in place and may reside in read-only
+memory.
+
 Addition uses the unchecked `rcgmp.bridge.mpz.to_bits` and `from_bits`
 representation casts. The SCF pass uses `rcgmp.bridge.addsi_extended` for the
 wrapped sum and signed-overflow flag, with ordinary `arith` operations for tag
