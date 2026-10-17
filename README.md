@@ -97,6 +97,8 @@ Use `-DGMP_ROOT=/path/to/gmp` for a custom GMP prefix, or set
 - `lib/Conversion/ConvertRCGMPToLLVM.cpp`: type conversion and registration.
 - `runtime`: C runtime, linked as `RCGMP::Runtime`.
 - `tests`: IR checks and native tests compiled through the complete lowering.
+  Test passes in `tests/lib` are registered in `rcgmp-test-opt`, a variant of
+  `rcgmp-opt` that is built only for the tests and not installed.
 
 ## Lowering and representation
 
