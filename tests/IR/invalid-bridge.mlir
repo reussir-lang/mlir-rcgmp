@@ -18,3 +18,23 @@ module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<!llvm.ptr, dense<
     return %r : i64
   }
 }
+// -----
+func.func @immortal_immediate() -> !rcgmp.mpz {
+  // expected-error@+1 {{requires a value outside the immediate range}}
+  %r = rcgmp.bridge.mpz.immortal 2305843009213693951 : i62 : !rcgmp.mpz
+  return %r : !rcgmp.mpz
+}
+// -----
+module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<!llvm.ptr, dense<32> : vector<4xi64>>>} {
+  func.func @immortal_immediate_32() -> !rcgmp.mpz {
+    // expected-error@+1 {{requires a value outside the immediate range}}
+    %r = rcgmp.bridge.mpz.immortal -536870912 : i30 : !rcgmp.mpz
+    return %r : !rcgmp.mpz
+  }
+}
+// -----
+func.func @immortal_unsigned() -> !rcgmp.mpz {
+  // expected-error@+1 {{requires a signless integer attribute}}
+  %r = rcgmp.bridge.mpz.immortal 9223372036854775808 : ui64 : !rcgmp.mpz
+  return %r : !rcgmp.mpz
+}

@@ -209,6 +209,59 @@ struct PromoteLowering : OpConversionPattern<MpzPromoteOp> {
   }
 };
 
+// Emit the object header and magnitude limbs as a read-only private global.
+// Its name is derived from the value, so equal constants share one object.
+struct ImmortalLowering : OpConversionPattern<MpzImmortalOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(MpzImmortalOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto word = wordType(op);
+    unsigned bits = word.getWidth();
+    APInt value = op.getValue();
+    bool negative = value.isNegative();
+    // Widen first so that the magnitude of the minimum value is representable.
+    APInt magnitude = value.sext(value.getBitWidth() + 1).abs();
+    unsigned count = llvm::divideCeil(magnitude.getActiveBits(), bits);
+    magnitude = magnitude.zextOrTrunc(count * bits);
+    int64_t size = negative ? -int64_t(count) : int64_t(count);
+    // Reference count, signed limb count, capacity, and limbs.
+    SmallVector<APInt> words = {APInt::getZero(bits),
+                                APInt(bits, size, /*isSigned=*/true),
+                                APInt(bits, count)};
+    for (unsigned i = 0; i < count; ++i)
+      words.push_back(magnitude.extractBits(bits, i * bits));
+    auto type = LLVM::LLVMArrayType::get(word, words.size());
+    auto data = DenseElementsAttr::get(
+        RankedTensorType::get({int64_t(words.size())}, word), words);
+    unsigned alignment = bits / 8;
+
+    SmallString<64> name(negative ? "__rcgmp_mpz_neg_" : "__rcgmp_mpz_");
+    magnitude.toString(name, 16, /*Signed=*/false, /*formatAsCLiteral=*/false,
+                       /*UpperCase=*/false);
+    auto module = op->getParentOfType<ModuleOp>();
+    Operation *existing = module.lookupSymbol(name);
+    auto global = dyn_cast_or_null<LLVM::GlobalOp>(existing);
+    if (existing) {
+      if (!global || !global.getConstant() ||
+          global.getLinkage() != LLVM::Linkage::Private ||
+          global.getAlignment().value_or(0) < alignment ||
+          global.getGlobalType() != type || global.getValueAttr() != data)
+        return op->emitError()
+               << "incompatible definition of immortal integer " << name;
+    } else {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(module.getBody());
+      global = LLVM::GlobalOp::create(
+          rewriter, op.getLoc(), type,
+          /*isConstant=*/true, LLVM::Linkage::Private, name, data, alignment);
+      global.setUnnamedAddr(LLVM::UnnamedAddr::Global);
+    }
+    rewriter.replaceOpWithNewOp<LLVM::AddressOfOp>(op, global);
+    return success();
+  }
+};
+
 template <typename Op, bool Increment>
 struct RefCountLowering : OpConversionPattern<Op> {
   using OpConversionPattern<Op>::OpConversionPattern;
@@ -318,15 +371,15 @@ using IsImmortalLowering =
 
 void populateRCGMPBridgeToLLVMConversionPatterns(LLVMTypeConverter &converter,
                                                  RewritePatternSet &patterns) {
-  patterns
-      .add<SignedOverflowLowering<AddSIExtendedOp, LLVM::SAddWithOverflowOp>,
-           SignedOverflowLowering<SubSIExtendedOp, LLVM::SSubWithOverflowOp>,
-           SignedOverflowLowering<MulSIOverflowOp, LLVM::SMulWithOverflowOp>,
-           IsImmediateLowering, FitsImmediateLowering, FromImmediateLowering,
-           PromoteLowering, RefCountLowering<MpzIncRefOp, true>,
-           RefCountLowering<MpzDecRefOp, false>, FreeLowering, ToBitsLowering,
-           FromBitsLowering, IsUniqueLowering, IsImmortalLowering>(
-          converter, patterns.getContext());
+  patterns.add<
+      SignedOverflowLowering<AddSIExtendedOp, LLVM::SAddWithOverflowOp>,
+      SignedOverflowLowering<SubSIExtendedOp, LLVM::SSubWithOverflowOp>,
+      SignedOverflowLowering<MulSIOverflowOp, LLVM::SMulWithOverflowOp>,
+      IsImmediateLowering, FitsImmediateLowering, FromImmediateLowering,
+      PromoteLowering, ImmortalLowering, RefCountLowering<MpzIncRefOp, true>,
+      RefCountLowering<MpzDecRefOp, false>, FreeLowering, ToBitsLowering,
+      FromBitsLowering, IsUniqueLowering, IsImmortalLowering>(
+      converter, patterns.getContext());
 }
 
 } // namespace mlir::rcgmp

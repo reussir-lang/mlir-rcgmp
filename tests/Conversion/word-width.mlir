@@ -1,5 +1,19 @@
 // RUN: %rcgmp-opt %s -convert-rcgmp-to-scf -convert-scf-to-cf -convert-to-llvm='dynamic' -reconcile-unrealized-casts | %FileCheck %s
 module attributes {dlti.dl_spec = #dlti.dl_spec<#dlti.dl_entry<!llvm.ptr, dense<32> : vector<4xi64>>, #dlti.dl_entry<index, 16 : i64>>} {
+  // CHECK-DAG: llvm.mlir.global private unnamed_addr constant @__rcgmp_mpz_20000000(dense<[0, 1, 1, 536870912]> : tensor<4xi32>) {addr_space = 0 : i32, alignment = 4 : i64} : !llvm.array<4 x i32>
+  // CHECK-DAG: llvm.mlir.global private unnamed_addr constant @__rcgmp_mpz_neg_20000001(dense<[0, -1, 1, 536870913]> : tensor<4xi32>) {addr_space = 0 : i32, alignment = 4 : i64} : !llvm.array<4 x i32>
+  // CHECK-LABEL: llvm.func @constants
+  // CHECK: llvm.mlir.constant(2147483645 : i32)
+  // CHECK: llvm.mlir.addressof @__rcgmp_mpz_20000000
+  // CHECK: llvm.mlir.constant(-2147483647 : i32)
+  // CHECK: llvm.mlir.addressof @__rcgmp_mpz_neg_20000001
+  func.func @constants() -> (!rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz) {
+    %max = rcgmp.constant 536870911 : !rcgmp.mpz
+    %above = rcgmp.constant 536870912 : !rcgmp.mpz
+    %min = rcgmp.constant -536870912 : !rcgmp.mpz
+    %below = rcgmp.constant -536870913 : !rcgmp.mpz
+    return %max, %above, %min, %below : !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz, !rcgmp.mpz
+  }
   // CHECK-LABEL: llvm.func @make
   // CHECK: llvm.alloca {{.*}} x i32
   // CHECK: llvm.mlir.constant(536870911 : i64)

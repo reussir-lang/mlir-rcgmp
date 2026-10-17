@@ -36,6 +36,29 @@ struct FromIntLowering : OpRewritePattern<FromIntOp> {
   }
 };
 
+struct ConstantLowering : OpRewritePattern<ConstantOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(ConstantOp op,
+                                PatternRewriter &rewriter) const override {
+    auto type = op.getType();
+    unsigned width =
+        DataLayout::closest(op).getTypeSizeInBits(type).getFixedValue();
+    APInt value = op.getValue();
+    if (!bridge::fitsImmediate(value, width)) {
+      rewriter.replaceOpWithNewOp<bridge::MpzImmortalOp>(op, type,
+                                                         op.getValueAttr());
+      return success();
+    }
+    APInt tagged = value.sextOrTrunc(width).shl(2);
+    tagged.setBit(0);
+    auto bits = arith::ConstantOp::create(
+        rewriter, op.getLoc(),
+        rewriter.getIntegerAttr(rewriter.getIntegerType(width), tagged));
+    rewriter.replaceOpWithNewOp<bridge::MpzFromBitsOp>(op, type, bits);
+    return success();
+  }
+};
+
 // Move the insertion point into a branch taken only for counted heap values.
 // Immediate and immortal values have no reference count to update.
 void enterCountedBranch(PatternRewriter &rewriter, Location loc, Value value) {
@@ -209,12 +232,12 @@ struct ConvertRCGMPToSCFPass
   }
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<FromIntLowering, RetainLowering, ReleaseLowering, AddILowering,
-                 SubILowering, MulILowering, AndILowering, XOrILowering>(
-        &getContext());
+    patterns.add<ConstantLowering, FromIntLowering, RetainLowering,
+                 ReleaseLowering, AddILowering, SubILowering, MulILowering,
+                 AndILowering, XOrILowering>(&getContext());
     ConversionTarget target(getContext());
-    target.addIllegalOp<FromIntOp, RetainOp, ReleaseOp, AddIOp, SubIOp, MulIOp,
-                        AndIOp, XOrIOp>();
+    target.addIllegalOp<ConstantOp, FromIntOp, RetainOp, ReleaseOp, AddIOp,
+                        SubIOp, MulIOp, AndIOp, XOrIOp>();
     target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

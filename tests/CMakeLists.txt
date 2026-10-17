@@ -56,6 +56,7 @@ endif()
 rcgmp_native_test(addition)
 rcgmp_native_test(binary)
 rcgmp_native_test(signed-overflow)
+rcgmp_native_test(constant)
 rcgmp_native_test(differential)
 add_test(NAME rcgmp-differential-seed
   COMMAND rcgmp-differential 3141592653 64)

@@ -80,6 +80,20 @@ def RCGMP_MpzFromImmediateOp : RCGMPBridgeOp<"mpz.from_imm", [Pure]> {
   let summary = "Encode an integer proven to fit the immediate range";
 }
 
+def RCGMP_MpzImmortalOp : RCGMPBridgeOp<"mpz.immortal", [Pure]> {
+  let summary = "Address a static immortal integer";
+  let description = [{
+    The value is a signless integer attribute read as signed two's complement.
+    It must lie outside the immediate range of the handle width from the data
+    layout. The result is a heap handle to a static, read-only object with a
+    zero reference count. It needs no reference counting.
+  }];
+  let arguments = (ins APIntAttr:$value);
+  let results = (outs RCGMP_MpzType:$result);
+  let assemblyFormat = "$value attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def RCGMP_MpzPromoteOp : RCGMPBridgeOp<"mpz.promote", [RCGMP_NotSpeculatable]> {
   let arguments = (ins AnySignlessInteger:$value, UnitAttr:$isUnsigned);
   let results =
