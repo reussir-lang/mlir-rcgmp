@@ -40,7 +40,7 @@ endfunction()
 add_custom_target(check-rcgmp
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  DEPENDS rcgmp-opt rcgmp-gmp-link rcgmp-type-lowering
+  DEPENDS rcgmp-opt rcgmp-test-opt rcgmp-gmp-link rcgmp-type-lowering
   USES_TERMINAL)
 
 rcgmp_native_test(construction)
