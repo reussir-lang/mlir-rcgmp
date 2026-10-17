@@ -30,7 +30,7 @@ void rcgmp_mpz_free(void *pointer, uint32_t atomic) {
 }
 
 void *rcgmp_mpz_retain(void *pointer, uint32_t atomic) {
-  if (!rcgmp_is_immediate(pointer)) {
+  if (!rcgmp_is_immediate(pointer) && !rcgmp_is_immortal(pointer, atomic)) {
     RCGMPMpz *value = pointer;
     uintptr_t old = atomic ? atomic_fetch_add_explicit(&value->refs.atomic, 1,
                                                        memory_order_relaxed)
@@ -42,7 +42,7 @@ void *rcgmp_mpz_retain(void *pointer, uint32_t atomic) {
 }
 
 void rcgmp_mpz_release(void *pointer, uint32_t atomic) {
-  if (!rcgmp_is_immediate(pointer)) {
+  if (!rcgmp_is_immediate(pointer) && !rcgmp_is_immortal(pointer, atomic)) {
     RCGMPMpz *value = pointer;
     uintptr_t old = atomic ? atomic_fetch_sub_explicit(&value->refs.atomic, 1,
                                                        memory_order_release)

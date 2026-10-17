@@ -80,6 +80,26 @@ int main(void) {
   release_local(retain_local(x));
   release_local(x);
   CHECK(allocations == before);
+
+  // A zero count marks an immortal object; generated and runtime reference
+  // counting both leave it unchanged.
+  for (uint32_t atomic = 0; atomic < 2; ++atomic) {
+    RCGMPMpz *heap = atomic ? from_atomic(INT64_MAX) : from_signed(INT64_MAX);
+    heap->refs.local = 0;
+    size_t freed = deallocations;
+    if (atomic) {
+      release_atomic(retain_atomic(heap));
+      release_atomic(heap);
+    } else {
+      release_local(retain_local(heap));
+      release_local(heap);
+    }
+    rcgmp_mpz_release(rcgmp_mpz_retain(heap, atomic), atomic);
+    rcgmp_mpz_release(heap, atomic);
+    CHECK(heap->refs.local == 0 && deallocations == freed);
+    heap->refs.local = 1;
+    rcgmp_mpz_release(heap, atomic);
+  }
 #endif
   mpz_clear(expected);
   return 0;

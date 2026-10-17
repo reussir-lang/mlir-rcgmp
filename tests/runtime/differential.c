@@ -38,11 +38,33 @@ void *from_signed_i64_atomic(uint64_t);
 void *from_unsigned_i64_atomic(uint64_t);
 void *from_signed_i129_atomic(uint64_t, uint64_t, uint64_t);
 void *from_unsigned_i129_atomic(uint64_t, uint64_t, uint64_t);
+void *constant_local(size_t);
+void *constant_atomic(size_t);
 
 // Compiled reference counting, indexed by atomicity. Operands are built by the
 // C runtime, so both implementations operate on the same objects.
 static void *(*retain[2])(void *) = {retain_local, retain_atomic};
 static void (*release[2])(void *) = {release_local, release_atomic};
+
+// Compiled constants, selected by index, and their values in the order of
+// differential.mlir.
+static void *(*constant[2])(size_t) = {constant_local, constant_atomic};
+static const char *constantValues[] = {
+    "0",
+    "-1",
+    "2305843009213693951",
+    "-2305843009213693952",
+    "2305843009213693952",
+    "-2305843009213693953",
+    "9223372036854775807",
+    "-9223372036854775808",
+    "18446744073709551615",
+    "-18446744073709551616",
+    "340282366920938463463374607431768211455",
+    "-340282366920938463463374607431768211457",
+};
+#define CONSTANT_COUNT (sizeof(constantValues) / sizeof(*constantValues))
+static mpz_t constants[CONSTANT_COUNT];
 
 // Each operation lists its compiled and runtime entry points, indexed by
 // atomicity, and the GMP function it must agree with.
@@ -114,8 +136,15 @@ static FromIntOperation fromIntOperations[] = {
 };
 
 // A shared operand has an extra reference held by the caller, which must
-// survive with its value. An aliased rhs is a retained reference to the lhs.
-enum { SharedLhs = 1, SharedRhs = 2, Aliased = 4 };
+// survive with its value. An aliased rhs is a retained reference to the lhs. An
+// immortal heap operand has a zero reference count, like a compiled constant.
+enum {
+  SharedLhs = 1,
+  SharedRhs = 2,
+  Aliased = 4,
+  ImmortalLhs = 8,
+  ImmortalRhs = 16
+};
 typedef struct {
   unsigned flags;
   const char *name;
@@ -126,10 +155,14 @@ static OwnershipMode pairModes[] = {
     {SharedLhs, "shared lhs"},
     {SharedRhs, "shared rhs"},
     {SharedLhs | SharedRhs, "shared operands"},
+    {ImmortalLhs, "immortal lhs"},
+    {SharedLhs | ImmortalRhs, "shared lhs, immortal rhs"},
+    {ImmortalLhs | ImmortalRhs, "immortal operands"},
 };
 static OwnershipMode aliasModes[] = {
     {Aliased, "aliased operands"},
     {Aliased | SharedLhs, "aliased shared operand"},
+    {Aliased | ImmortalLhs, "aliased immortal operand"},
 };
 
 static unsigned long seed = 31415;
@@ -151,10 +184,12 @@ static void print_position(void) {
 // A heap operand is allocated with spare limbs beyond its magnitude, as results
 // of earlier operations often are, so that an operation may reuse it in place.
 // Like the stale limbs of such results, the spare limbs are nonzero, so reading
-// past the magnitude changes the value.
+// past the magnitude changes the value. A constant operand is the object that
+// compiled code produces for the value, which has no spare limbs.
 typedef struct {
   mpz_srcptr value;
   size_t spare;
+  void *constant;
 } Operand;
 
 typedef struct {
@@ -175,6 +210,8 @@ static int fits_immediate(mpz_srcptr value) {
 static void print_operand(const char *name, Operand operand) {
   if (fits_immediate(operand.value))
     gmp_fprintf(stderr, "  %s = %#Zx (immediate)\n", name, operand.value);
+  else if (operand.constant)
+    gmp_fprintf(stderr, "  %s = %#Zx (constant)\n", name, operand.value);
   else
     gmp_fprintf(stderr, "  %s = %#Zx (%zu spare limbs)\n", name, operand.value,
                 operand.spare);
@@ -189,7 +226,11 @@ static void fail(BinaryCase *test, const char *problem) {
   abort();
 }
 
-static void *make_operand(Operand operand, uint32_t atomic) {
+// An immortal heap operand keeps its spare limbs, which would let a counted one
+// hold the result in place.
+static void *make_operand(Operand operand, uint32_t atomic, int immortal) {
+  if (operand.constant)
+    return operand.constant;
   void *handle = from_mpz(operand.value, atomic);
   if (rcgmp_is_immediate(handle))
     return handle;
@@ -202,6 +243,12 @@ static void *make_operand(Operand operand, uint32_t atomic) {
         i % 2 ? GMP_NUMB_MAX / 0xff * 0xa5 : GMP_NUMB_MAX;
   padded->size = exact->size;
   rcgmp_mpz_release(exact, atomic);
+  if (immortal) {
+    if (atomic)
+      atomic_store(&padded->refs.atomic, 0);
+    else
+      padded->refs.local = 0;
+  }
   return padded;
 }
 
@@ -212,14 +259,26 @@ static uintptr_t references(void *value, uint32_t atomic) {
 
 // Each operand position holding operand consumed one of its references, and the
 // caller's reference kept its value. The result may be another reference to it.
+// An immortal operand keeps its zero count.
 static void release_shared(BinaryCase *test, void *operand, mpz_srcptr value,
-                           void *result) {
+                           void *result, int immortal) {
   if (!represents(operand, value))
     fail(test, "shared operand was modified");
   if (!rcgmp_is_immediate(operand) &&
-      references(operand, test->atomic) != 1 + (operand == result))
+      references(operand, test->atomic) !=
+          (immortal ? 0 : 1 + (operand == result)))
     fail(test, "operand positions did not each consume one reference");
   release[test->atomic](operand);
+}
+
+// Immortal operands are neither counted nor written, even when the result is
+// the same object. Those made here are then freed.
+static void drop_immortal(BinaryCase *test, Operand operand, void *handle) {
+  if (!represents(handle, operand.value) ||
+      references(handle, test->atomic) != 0)
+    fail(test, "immortal operand was modified");
+  if (!operand.constant)
+    rcgmp_mpz_free(handle, test->atomic);
 }
 
 static void retain_operand(BinaryCase *test, void *operand) {
@@ -231,12 +290,17 @@ static void check_binary(BinaryCase *test) {
   uint32_t atomic = test->atomic;
   unsigned flags = test->mode->flags;
   mpz_srcptr lhs = test->lhs.value, rhs = test->rhs.value;
-  void *x = make_operand(test->lhs, atomic);
+  void *x = make_operand(test->lhs, atomic, flags & ImmortalLhs);
   void *y = x;
   if (flags & Aliased)
     retain_operand(test, x);
   else
-    y = make_operand(test->rhs, atomic);
+    y = make_operand(test->rhs, atomic, flags & ImmortalRhs);
+  int immortalX =
+      !rcgmp_is_immediate(x) && (test->lhs.constant || (flags & ImmortalLhs));
+  int immortalY = y == x ? immortalX
+                         : !rcgmp_is_immediate(y) &&
+                               (test->rhs.constant || (flags & ImmortalRhs));
   if (!represents(x, lhs) || !represents(y, rhs))
     fail(test, "operand construction is not canonical");
   if (flags & SharedLhs)
@@ -250,18 +314,24 @@ static void check_binary(BinaryCase *test) {
   void *result = test->operation->apply[atomic](x, y);
   if (!represents(result, expected))
     fail(test, "result differs from GMP or is not canonical");
-  // General multiplication cannot write over its operands.
+  // General multiplication cannot write over its operands, and immortal ones
+  // are never written.
   int reusable = test->operation->oracle != mpz_mul || mpz_size(lhs) <= 1 ||
                  mpz_size(rhs) <= 1;
-  if (test->roomy && !flags && reusable && !rcgmp_is_immediate(result) &&
-      (!rcgmp_is_immediate(x) || !rcgmp_is_immediate(y)) &&
-      allocations != before)
+  int counted = (!rcgmp_is_immediate(x) && !immortalX) ||
+                (!rcgmp_is_immediate(y) && !immortalY);
+  if (test->roomy && !(flags & (SharedLhs | SharedRhs | Aliased)) && reusable &&
+      counted && !rcgmp_is_immediate(result) && allocations != before)
     fail(test, "result did not reuse a unique operand");
   if (flags & SharedLhs)
-    release_shared(test, x, lhs, result);
+    release_shared(test, x, lhs, result, immortalX);
   if (flags & SharedRhs)
-    release_shared(test, y, rhs, result);
+    release_shared(test, y, rhs, result, immortalY);
   release[atomic](result);
+  if (immortalX)
+    drop_immortal(test, test->lhs, x);
+  if (immortalY && y != x)
+    drop_immortal(test, test->rhs, y);
   mpz_clear(expected);
   if (allocations != deallocations)
     fail(test, "allocations and deallocations do not balance");
@@ -293,7 +363,8 @@ static OwnershipMode runtimeMode = {0, "runtime entry point"};
 
 static void check_runtime(BinaryOperation *operation, uint32_t atomic,
                           mpz_srcptr lhs, mpz_srcptr rhs) {
-  BinaryCase test = {operation, atomic, &runtimeMode, {lhs, 0}, {rhs, 0}, 0};
+  BinaryCase test = {operation,      atomic,         &runtimeMode,
+                     {lhs, 0, NULL}, {rhs, 0, NULL}, 0};
   mpz_t expected;
   mpz_init(expected);
   operation->oracle(expected, lhs, rhs);
@@ -511,7 +582,8 @@ static void check_from_int_stream(FromIntOperation *operation,
 
 // Each chain feeds every result into the next operation as its uniquely owned
 // lhs, so operands also carry the growth headroom and the stale limbs above the
-// magnitude that the runtime leaves behind, and come from earlier reuse.
+// magnitude that the runtime leaves behind, and come from earlier reuse. A
+// constant rhs may also come back as the result and become the next lhs.
 static void check_chains(uint32_t atomic, gmp_randstate_t random) {
   size_t operationCount = sizeof(binaryOperations) / sizeof(*binaryOperations);
   mpz_t accumulator, operand, expected;
@@ -522,8 +594,8 @@ static void check_chains(uint32_t atomic, gmp_randstate_t random) {
   for (unsigned long chain = 0; chain < positionCount; ++chain) {
     position = chain + 1;
     random_operand(accumulator, random);
-    void *result =
-        make_operand((Operand){accumulator, random_spare(random)}, atomic);
+    void *result = make_operand(
+        (Operand){accumulator, random_spare(random), NULL}, atomic, 0);
     unsigned steps = 8 + gmp_urandomm_ui(random, 9);
     for (unsigned step = 1; step <= steps; ++step) {
       BinaryOperation *operation;
@@ -532,19 +604,27 @@ static void check_chains(uint32_t atomic, gmp_randstate_t random) {
         operation = &binaryOperations[gmp_urandomm_ui(random, operationCount)];
       while (operation->oracle == mpz_mul &&
              mpz_sizeinbase(accumulator, 2) > 1000);
-      switch (gmp_urandomm_ui(random, 3)) {
+      void *rhs = NULL;
+      switch (gmp_urandomm_ui(random, 4)) {
       case 0:
         random_operand(operand, random);
         break;
       case 1:
         related_operand(operand, accumulator, random);
         break;
+      case 2: {
+        size_t index = gmp_urandomm_ui(random, CONSTANT_COUNT);
+        mpz_set(operand, constants[index]);
+        rhs = constant[atomic](index);
+        break;
+      }
       default:
         mpz_set_si(operand, random_delta(random, 4));
         break;
       }
-      void *rhs =
-          make_operand((Operand){operand, random_spare(random)}, atomic);
+      if (!rhs)
+        rhs = make_operand((Operand){operand, random_spare(random), NULL},
+                           atomic, 0);
       operation->oracle(expected, accumulator, operand);
       result = operation->apply[atomic](result, rhs);
       if (!represents(result, expected)) {
@@ -605,6 +685,24 @@ int main(int argc, char **argv) {
   gmp_randstate_t random;
   gmp_randinit_default(random);
 
+  // Each compiled constant holds its value, and one outside the immediate range
+  // is the same static object with a zero count on every call.
+  for (size_t i = 0; i < CONSTANT_COUNT; ++i) {
+    mpz_init_set_str(constants[i], constantValues[i], 10);
+    for (uint32_t atomic = 0; atomic < 2; ++atomic) {
+      void *value = constant[atomic](i);
+      if (!represents(value, constants[i]) ||
+          (!rcgmp_is_immediate(value) &&
+           (references(value, atomic) != 0 || constant[atomic](i) != value))) {
+        fprintf(stderr,
+                "constant %s (%s): value differs from GMP, is not canonical, "
+                "or is counted\n",
+                constantValues[i], atomic ? "atomic" : "local");
+        abort();
+      }
+    }
+  }
+
   // Zero, one, both sides of the immediate bounds, and one or two full limbs;
   // the square roots of the immediate bound, whose products land exactly on
   // it; and the signed word bound.
@@ -635,13 +733,29 @@ int main(int argc, char **argv) {
       positionCount = 0;
       for (size_t spare = 0; spare < 2; ++spare) {
         for (size_t i = 0; i < boundaryCount; ++i) {
-          Operand x = {boundaries[i], boundarySpares[spare]};
+          Operand x = {boundaries[i], boundarySpares[spare], NULL};
           for (size_t j = 0; j < boundaryCount; ++j) {
-            Operand y = {boundaries[j], boundarySpares[spare]};
+            Operand y = {boundaries[j], boundarySpares[spare], NULL};
             check_pair(operation, atomic, x, y, boundarySpares[spare] > 0);
           }
           check_aliased(operation, atomic, x);
         }
+      }
+      // Constants against boundary operands on either side and each other.
+      for (size_t i = 0; i < CONSTANT_COUNT; ++i) {
+        Operand c = {constants[i], 0, constant[atomic](i)};
+        for (size_t spare = 0; spare < 2; ++spare) {
+          for (size_t j = 0; j < boundaryCount; ++j) {
+            Operand y = {boundaries[j], boundarySpares[spare], NULL};
+            check_pair(operation, atomic, c, y, boundarySpares[spare] > 0);
+            check_pair(operation, atomic, y, c, boundarySpares[spare] > 0);
+          }
+        }
+        for (size_t j = 0; j < CONSTANT_COUNT; ++j) {
+          Operand d = {constants[j], 0, constant[atomic](j)};
+          check_pair(operation, atomic, c, d, 0);
+        }
+        check_aliased(operation, atomic, c);
       }
       for (size_t i = 0; i < boundaryCount; ++i)
         for (size_t j = 0; j < boundaryCount; ++j)
@@ -657,10 +771,17 @@ int main(int argc, char **argv) {
           related_operand(rhs, lhs, random);
         else
           random_operand(rhs, random);
-        Operand x = {lhs, random_spare(random)};
-        Operand y = {rhs, random_spare(random)};
+        Operand x = {lhs, random_spare(random), NULL};
+        Operand y = {rhs, random_spare(random), NULL};
         check_pair(operation, atomic, x, y, 0);
         check_aliased(operation, atomic, x);
+        // A random constant replaces either operand.
+        size_t index = gmp_urandomm_ui(random, CONSTANT_COUNT);
+        Operand c = {constants[index], 0, constant[atomic](index)};
+        if (gmp_urandomb_ui(random, 1))
+          check_pair(operation, atomic, c, y, 0);
+        else
+          check_pair(operation, atomic, x, c, 0);
       }
     }
   }
@@ -673,6 +794,8 @@ int main(int argc, char **argv) {
 
   for (size_t i = 0; i < boundaryCount; ++i)
     mpz_clear(boundaries[i]);
+  for (size_t i = 0; i < CONSTANT_COUNT; ++i)
+    mpz_clear(constants[i]);
   mpz_clears(lhs, rhs, NULL);
   gmp_randclear(random);
   return 0;
