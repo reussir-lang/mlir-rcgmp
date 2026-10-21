@@ -1,5 +1,5 @@
 // RUN: %rcgmp-opt %s -convert-rcgmp-to-scf -convert-scf-to-cf -convert-to-llvm -reconcile-unrealized-casts -o /dev/null
-// Entry points compared against GMP by differential.c.
+// Entry points compared against GMP by differential.cpp.
 func.func @addi_local(%x: !rcgmp.mpz, %y: !rcgmp.mpz) -> !rcgmp.mpz {
   %r = rcgmp.addi %x, %y : !rcgmp.mpz
   return %r : !rcgmp.mpz
@@ -200,7 +200,7 @@ func.func @from_unsigned_i129_atomic(%w0: i64, %w1: i64, %w2: i64) -> !rcgmp.mpz
 }
 // Constants, selected by index, cover both sides of the 64-bit immediate
 // bounds and of the signed and unsigned word bounds, and two- and three-limb
-// values; other indices yield zero. differential.c lists the same values in
+// values; other indices yield zero. differential.cpp lists the same values in
 // this order.
 func.func @constant_local(%index: index) -> !rcgmp.mpz {
   %r = scf.index_switch %index -> !rcgmp.mpz
