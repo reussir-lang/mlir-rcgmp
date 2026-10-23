@@ -5,6 +5,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <iterator>
 #include <optional>
 #include <span>
 export module rcgmp.runtime:divide;
@@ -136,30 +137,34 @@ Division divide(Handle lhs, Handle rhs, Reuse reuse) {
     std::size_t qn = nn - dn + 1;
     // mpn_tdiv_qr may write the remainder over the dividend, but no result
     // may overlap the divisor, and the quotient may overlap neither operand.
-    // A result that is not requested goes to scratch storage, or to a
-    // reusable dividend, which its release then frees.
-    Mpz &quotient = wantQuotient ? allocateResult(qn + 1) : allocate(qn + 1);
-    Mpz &remainder = reuse.lhs       ? lhs.heap()
-                     : wantRemainder ? allocateResult(dn)
-                                     : allocate(dn);
-    Limb *qp = quotient.limbs().data(), *rp = remainder.limbs().data();
+    // A result that is not requested goes to a reusable dividend, which its
+    // release then frees, or to scratch storage, on the stack when short.
+    Mpz *quotient = wantQuotient ? &allocateResult(qn + 1) : nullptr;
+    Mpz *remainder = reuse.lhs       ? &lhs.heap()
+                     : wantRemainder ? &allocateResult(dn)
+                                     : nullptr;
+    std::size_t scratchCount = !quotient ? qn + 1 : !remainder ? dn : 0;
+    Limb stack[16];
+    Mpz *spill =
+        scratchCount > std::size(stack) ? &allocate(scratchCount) : nullptr;
+    Limb *scratch = spill ? spill->limbs().data() : stack;
+    Limb *qp = quotient ? quotient->limbs().data() : scratch;
+    Limb *rp = remainder ? remainder->limbs().data() : scratch;
     mpn_tdiv_qr(qp, rp, 0, np, nn, dp, dn);
     bool adjust = adjusts(!mpn_zero_p(rp, dn));
     qp[qn] = adjust ? mpn_add_1(qp, qp, qn, 1) : 0;
     if (adjust)
       mpn_sub_n(rp, dp, rp, dn);
+    if (spill)
+      deallocate<counting>(*spill);
     if (wantQuotient) {
-      quotient.setMagnitude(qn + 1, negative);
-      result.quotient = normalize<counting>(quotient);
-    } else {
-      deallocate<counting>(quotient);
+      quotient->setMagnitude(qn + 1, negative);
+      result.quotient = normalize<counting>(*quotient);
     }
     if (wantRemainder) {
       keepLhs = reuse.lhs;
-      remainder.setMagnitude(dn, adjust ? d.negative : n.negative);
-      result.remainder = normalize<counting>(remainder);
-    } else if (!reuse.lhs) {
-      deallocate<counting>(remainder);
+      remainder->setMagnitude(dn, adjust ? d.negative : n.negative);
+      result.remainder = normalize<counting>(*remainder);
     }
   }
   // Release each operand whose storage holds no result, after all reads.
