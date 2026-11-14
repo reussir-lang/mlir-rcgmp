@@ -37,7 +37,7 @@ Handle shiftLeft(Handle value, std::uintptr_t amount, bool reuse) {
       return value;
     Limb magnitude = integer < 0 ? -static_cast<Limb>(integer) : integer;
     // Allocation rejects the saturated count.
-    Mpz &result = allocateResult(std::saturating_add(limbs, std::size_t{2}));
+    Mpz &result = allocateResult(saturating_add(limbs, std::size_t{2}));
     Limb *out = result.limbs().data();
     std::fill(out, out + limbs, Limb{0});
     out[limbs] = magnitude << bits;
@@ -49,8 +49,8 @@ Handle shiftLeft(Handle value, std::uintptr_t amount, bool reuse) {
     return value; // The consumed reference becomes the result's.
   Mpz &heap = value.heap();
   std::size_t count = heap.count();
-  std::size_t required = std::saturating_add(std::saturating_add(count, limbs),
-                                             std::size_t{bits != 0});
+  std::size_t required =
+      saturating_add(saturating_add(count, limbs), std::size_t{bits != 0});
   Mpz &result = shiftDestination(value, reuse, required);
   Limb *out = result.limbs().data();
   const Limb *in = heap.limbs().data();
