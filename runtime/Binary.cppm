@@ -54,7 +54,7 @@ private:
 // A new integer for a result of up to required limbs. Geometric headroom
 // amortizes repeated growth. Allocation rejects the saturated capacity.
 inline Mpz &allocateResult(std::size_t required) {
-  return allocate(std::add_sat(required, required / 2 + 1));
+  return allocate(std::saturating_add(required, required / 2 + 1));
 }
 
 // Returns storage for a result of up to required limbs: a reusable operand with

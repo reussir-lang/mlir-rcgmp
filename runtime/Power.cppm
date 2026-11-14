@@ -106,7 +106,7 @@ template <Counting counting>
 
   // The power has at most exponent * bits bits, of which the shift supplies
   // exponent * zeros. Allocation rejects a saturated count.
-  std::uintptr_t total = std::mul_sat(exponent, zeros + shift);
+  std::uintptr_t total = std::saturating_mul(exponent, zeros + shift);
   if (odd.size() == 1 && odd[0] == 1) {
     release<counting>(base);
     return shiftLeft<counting>(Handle::immediate(negative ? -1 : 1), total,
@@ -118,8 +118,8 @@ template <Counting counting>
   // significant limb that mpn_sqr and mpn_mul write and may leave zero, or for
   // the final carry.
   std::size_t size =
-      std::mul_sat(exponent, bits - zeros - shift) / GMP_NUMB_BITS + 2;
-  std::size_t required = std::add_sat(shiftLimbs, size);
+      std::saturating_mul(exponent, bits - zeros - shift) / GMP_NUMB_BITS + 2;
+  std::size_t required = std::saturating_add(shiftLimbs, size);
 
   // A one-limb factor takes fewer steps as the power of m^k, which then
   // multiplies m^r.
@@ -226,7 +226,7 @@ Handle power(Handle base, std::uintptr_t exponent, bool reuse) {
     // amount saturates.
     if (std::has_single_bit(magnitude)) {
       std::uintptr_t amount =
-          std::mul_sat<std::uintptr_t>(exponent, std::countr_zero(magnitude));
+          std::saturating_mul<std::uintptr_t>(exponent, std::countr_zero(magnitude));
       if (amount < GMP_NUMB_BITS)
         if (std::optional<Handle> small =
                 Handle::immediate(Limb{1} << amount, negative))
