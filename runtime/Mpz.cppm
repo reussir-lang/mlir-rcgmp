@@ -11,12 +11,27 @@ module;
 #include <cstdlib>
 #include <limits>
 #include <new>
+#include <numeric>
 #include <optional>
 #include <span>
 #include <type_traits>
 export module rcgmp.runtime:mpz;
 
 namespace rcgmp {
+
+// C++26 renamed std::add_sat and std::mul_sat. A standard library provides
+// one pair of names or the other; Apple's libc++ still has the old pair.
+#if __cpp_lib_saturation_arithmetic >= 202603L
+using std::saturating_add;
+using std::saturating_mul;
+#else
+template <typename T> constexpr T saturating_add(T lhs, T rhs) noexcept {
+  return std::add_sat(lhs, rhs);
+}
+template <typename T> constexpr T saturating_mul(T lhs, T rhs) noexcept {
+  return std::mul_sat(lhs, rhs);
+}
+#endif
 
 export using Limb = mp_limb_t;
 
