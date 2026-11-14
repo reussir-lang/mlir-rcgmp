@@ -225,8 +225,8 @@ Handle power(Handle base, std::uintptr_t exponent, bool reuse) {
     // Powers of two are shifts of one, which allocation rejects when the
     // amount saturates.
     if (std::has_single_bit(magnitude)) {
-      std::uintptr_t amount =
-          std::saturating_mul<std::uintptr_t>(exponent, std::countr_zero(magnitude));
+      std::uintptr_t amount = std::saturating_mul<std::uintptr_t>(
+          exponent, std::countr_zero(magnitude));
       if (amount < GMP_NUMB_BITS)
         if (std::optional<Handle> small =
                 Handle::immediate(Limb{1} << amount, negative))

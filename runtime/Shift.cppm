@@ -49,8 +49,8 @@ Handle shiftLeft(Handle value, std::uintptr_t amount, bool reuse) {
     return value; // The consumed reference becomes the result's.
   Mpz &heap = value.heap();
   std::size_t count = heap.count();
-  std::size_t required =
-      std::saturating_add(std::saturating_add(count, limbs), std::size_t{bits != 0});
+  std::size_t required = std::saturating_add(std::saturating_add(count, limbs),
+                                             std::size_t{bits != 0});
   Mpz &result = shiftDestination(value, reuse, required);
   Limb *out = result.limbs().data();
   const Limb *in = heap.limbs().data();
